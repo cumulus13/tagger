@@ -32,14 +32,27 @@ else:
 from mutagen import id3
 from mutagen.id3 import ID3, PictureType
 from mutagen.easyid3 import EasyID3
+from mutagen.mp3 import MP3
+from datetime import datetime
 
 class Tagger(object):
+    NOW = datetime.now()
+    THIS_YEAR = NOW.year
+    
     def __init__(self, files = None, dirs = None):
         super(Tagger, self)
         self.files = files
         self.dirs = dirs
+        self.all_artist = []
+        self.all_albumartist = []
+        self.all_album = []
+        self.all_original_artist = []
+        self.files_passed = []
+        self.len_tracks = None
     
     def format_track(self, track, numbers, change = False):
+        if self.len_tracks:
+            numbers = self.len_tracks
         if len(str(numbers)) == 1:
             numbers = "0" + str(numbers)
         if not "/" in track:
@@ -48,19 +61,23 @@ class Tagger(object):
             return track + "/" + str(numbers)
         else:
             fr, to = track.split("/")
+            debug(fr = fr)
+            debug(to = to)
             if len(str(fr)) == 1:
                 fr = "0" + str(fr)
             if len(str(to)) == 1:
                 to = "0" + str(to)
             if change:
                 return fr + "/" + str(numbers)
+            return fr + "/" + str(to)
         return track
     
     def usage(self):
         parser = argparse.ArgumentParser(formatter_class = argparse.RawTextHelpFormatter)
         parser.add_argument('PATH', help = 'file or directory contain music files', action = 'store', nargs = '*')
         parser.add_argument('-t', '--title', help = 'set Title or load from text file or take from file name just type "file"', action = 'store', nargs = '*')
-        parser.add_argument('-tt', '--track', help = 'set Track', action = 'store')
+        parser.add_argument('-tt', '--track', help = 'set Track', action = 'store', nargs = '*')
+        parser.add_argument('-ltt', '--len-tracks', help = 'set Track', action = 'store')
         parser.add_argument('-ct', '--change-track', help = 'keep change Track', action = 'store_true')
         parser.add_argument('-a', '--artist', help = 'set Artist', action = 'store')
         parser.add_argument('-sa', '--artist-solo', help = 'set Solo Artist', action = 'store')
@@ -92,12 +109,23 @@ class Tagger(object):
         parser.add_argument('-gt', '--get-title', help = 'Get titles', action = 'store_true')
         parser.add_argument('-T', '--test', action = 'store_true', help = 'Test only')
         parser.add_argument('-R', '--rename', action = 'store', help = 'rename by "file": just type "file" or "title"')
+        parser.add_argument('-RP', '--rename-pattern', action = 'store', help = 'rename pattern, example:- | " ", one by one')
         parser.add_argument('-I', '--info', action = 'store_true', help = 'Get Infos')
         parser.add_argument('-A', '--licface', action = 'store', help = 'Set All by LICFACE type "1" or "2" ')
+        parser.add_argument('-SA', '--help-licface', action = 'store_true', help = 'show valid licface set number')
+        parser.add_argument('-ec', '--extract-cover', action = 'store_true', help = 'Extract cover to file')
         if len(sys.argv) == 1:
             parser.print_help()
         else:
             args = parser.parse_args()
+            
+            if args.help_licface:
+                self.print_licface()
+                sys.exit()
+            if args.disc and len(args.disc) == 1:
+                args.disc = self.format_track(args.disc, int(args.disc))
+            if args.len_tracks:
+                self.len_tracks = args.len_tracks
 
             lyric_text = ''
             if args.lyric and os.path.isfile(args.lyric):
@@ -121,6 +149,11 @@ class Tagger(object):
                 
             else:
                 for i in args.PATH:
+                    i = os.path.abspath(i)
+                    debug(i = i)
+                    debug(i_is_file = os.path.isfile(os.path.abspath(i)))
+                    if len(args.PATH) == 1 and not os.path.isfile(os.path.abspath(i)):
+                        print('"' + make_colors(os.path.abspath(i), 'lw', 'lr') + '" ' + make_colors("Not a File !", 'b', 'ly'))
                     if os.path.isfile(i):
                         all_files.append(i)
                     elif os.path.isdir(i):
@@ -145,15 +178,15 @@ class Tagger(object):
                             _title = mt['TIT2'].text
                         except:
                             _title = ''
-                        all_title.append(_title)                    
+                        all_title.append(_title)
                 elif args.title and len(all_files) == len(args.title):
                     titles = args.title
                 else:
                     titles = args.title
-                    
                 
             debug(titles = titles)
-            
+            debug(args_track = args.track)
+            debug(all_files = all_files)
             if titles and len(titles) == len(all_files):
                 for i in titles:
                     if isinstance(i, bytes):
@@ -169,9 +202,26 @@ class Tagger(object):
                     else:
                         title = re.sub("\.mp3", '', i.split("\n")[0], re.I)
                         all_title.append(title)
+            elif args.track and len(args.track) == len(all_files):
+                for i in args.track:
+                    all_tracks.append(self.format_track(i, len(all_files)))
             else:
                 if titles:
                     print(make_colors("title not same with files !", 'lw', 'lr', ['blink']))
+                    sys.exit()
+            
+            if args.extract_cover:
+                end = False
+                for i in all_files:
+                    tag = ID3(i)
+                    for k in list(tag.keys()):
+                        if "APIC:" in k:
+                            self.Extract_cover(i)
+                            end = True
+                            break
+                    if end:
+                        break
+                if len(sys.argv[1:]) == 2 and '-ec' in sys.argv[1:]:
                     sys.exit()
             
             if args.get_title and all_files:
@@ -195,16 +245,92 @@ class Tagger(object):
             self.dirs = all_dirs
             debug(all_title = all_title)
             debug(all_tracks = all_tracks)
-            #pause()
+            debug(all_files = all_files)
+            
+            for i in all_files:
+                m = ID3(i)
+                c_artist = ''
+                c_album = ''
+                c_album_artist = ''
+                c_original_artist = ''
+                
+                try:
+                    c_artist = m['TPE1'].text[0]
+                except:
+                    pass
+                self.all_artist.append(c_artist)
+                try:
+                    c_album = m['TALB'].text[0]
+                except:
+                    pass
+                self.all_album.append(c_album)
+                try:
+                    c_album_artist = m['TPE2'].text[0]
+                except:
+                    pass
+                self.all_albumartist.append(c_album_artist)
+                try:
+                    c_original_artist = m['TOPE'].text[0]
+                except:
+                    pass
+                self.all_original_artist.append(c_original_artist)
+            
+            #debug(self_all_artist = self.all_artist)
+            #debug(self_all_album = self.all_album)
+            #debug(self_all_albumartist = self.all_albumartist)
+            #debug(self_all_original_artist = self.all_original_artist)
+            #sys.exit(0)
+            c_all_artist = list(set(self.all_artist))
+            c_all_album = list(set(self.all_album))
+            c_all_album_artist = list(set(self.all_albumartist))
+            c_all_original_artist = list(set(self.all_original_artist))
+            
+            debug(c_all_artist = c_all_artist)
+            debug(c_all_album = c_all_artist)
+            debug(c_all_album_artist = c_all_artist)
+            debug(c_all_original_artist = c_all_artist)
+            
+            if len(c_all_artist) > 1:
+                print(make_colors(", ".join(c_all_artist), 'b', 'ly'))
+                print(make_colors("There more than 1 ", 'lw', 'm') + make_colors("ARTIST", 'lw', 'lr') + make_colors(" Detected !", 'lc'))
+            if len(c_all_album) > 1:
+                print(make_colors(", ".join(c_all_album), 'b', 'ly'))
+                print(make_colors("There more than 1 ", 'lw', 'm') + make_colors("ALBUM", 'lw', 'lr') + make_colors(" Detected !", 'lc'))
+            if len(c_all_album_artist) > 1:
+                print(make_colors(", ".join(c_all_album_artist), 'b', 'ly'))
+                print(make_colors("There more than 1 ", 'lw', 'm') + make_colors("ALBUM ARTIST", 'lw', 'lr') + make_colors(" Detected !", 'lc'))
+            if len(c_all_original_artist) > 1:
+                print(make_colors(", ".join(c_all_original_artist), 'b', 'ly'))
+                print(make_colors("There more than 1 ", 'lw', 'm') + make_colors("ORIGINAL ARTIST", 'lw', 'lr') + make_colors(" Detected !", 'lc'))
+            if len(c_all_artist) > 1 or len(c_all_album) > 1 or len(c_all_album_artist) > 1 or len(c_all_original_artist) > 1:
+                qc = input(make_colors("Enter to Continue ... [q|x = Quit|Exit]", 'lw', 'lr'))
+                if qc and qc.strip() == 'q' or qc.strip() == 'x':
+                    sys.exit()
             if len(all_title) == len(all_files):
                 for i in all_files:
-                    if args.licface == '1':
+                    if args.licface == '0':
+                        if not args.artist:
+                            m = ID3(i)
+                            args.artist = m['TPE1'].text
+                        args.original_artist = args.artist
+                        args.group = args.artist
+                        args.comment = "LICFACE (licface@yahoo.com)"
+                        if not args.copyright:
+                            args.copyright = str(self.THIS_YEAR)
+                        if not args.date:
+                            args.date = str(self.THIS_YEAR)
+                        args.encodedby = 'BLACKID'
+                        if not args.disc:
+                            args.disc = "01/01"
+                    elif args.licface == '1':
                         if not args.artist:
                             m = ID3(i)
                             args.artist = m['TPE1'].text
                         args.comment = "LICFACE (licface@yahoo.com)"
-                        args.copyright = '2020'
-                        args.date = '2020'
+                        if not args.copyright:
+                            args.copyright = str(self.THIS_YEAR)
+                        if not args.date:
+                            args.date = str(self.THIS_YEAR)
                         args.encodedby = 'BLACKID'
                         args.publisher = "LICFACE"
                         if not args.disc:
@@ -214,8 +340,10 @@ class Tagger(object):
                             m = ID3(i)
                             args.artist = m['TPE1'].text                        
                         args.comment = "LICFACE (licface@yahoo.com)"
-                        args.copyright = '2020'
-                        args.date = '2020'
+                        if not args.copyright:
+                            args.copyright = str(self.THIS_YEAR)
+                        if not args.date:
+                            args.date = str(self.THIS_YEAR)
                         args.encodedby = 'BLACKID'
                         args.publisher = "LICFACE"
                         args.album_artist = args.artist
@@ -225,12 +353,65 @@ class Tagger(object):
                         args.url = 'licface@yahoo.com'
                         if not args.disc:
                             args.disc = "01/01"
+                    elif args.licface == '3':
+                        if not args.artist:
+                            m = ID3(i)
+                            args.artist = m['TPE1'].text                        
+                        args.comment = "LICFACE (licface@yahoo.com)"
+                        if not args.copyright:
+                            args.copyright = str(self.THIS_YEAR)
+                        args.encodedby = 'BLACKID'
+                        args.publisher = "LICFACE"
+                        args.album_artist = args.artist
+                        args.original_artist = args.artist
+                        args.group = args.artist
+                        args.composer = args.artist
+                        args.url = 'licface@yahoo.com'
+                        args.isrc = ''
+                        if not args.disc:
+                            args.disc = "01/01"
                             
                     if len(all_tracks) == len(all_title):
                         track = self.format_track(all_tracks[all_files.index(i)], len(all_files), args.change_track)
+                        
                         self.Set(i, all_title[all_files.index(i)], track, args.disc, args.album, args.artist, args.album_artist, args.original_artist, args.composer, args.comment, args.isrc, args.barcode, args.genre, args.date, args.bpm, args.copyright, args.encodedby, args.key, args.lyric, args.lyric_name, args.remix, args.subtitle, args.url, args.group, args.publisher, args.length, args.comment_desc, args.cover_name, args.cover, args.artist_solo, args.test)
+                        
+                        if args.rename == 'title':
+                            print(make_colors("RENAME", 'lw', 'lr') + ": " + make_colors(os.path.dirname(i), 'ly') + "\\" + make_colors(os.path.basename(
+                                i), 'lw', 'lr') + " " + make_colors("-->", 'lg') + " " + make_colors(str(track).split("/")[0] + ". " + str(all_title[all_files.index(i)]) + ".mp3", 'lw', 'bl'))
+                            if not args.test:
+                                os.rename(i, str(track).split("/")[0] + ". " + str(all_title[all_files.index(i)]) + ".mp3")
+                        elif args.rename == 'file':
+                            if args.rename_pattern:
+                                if args.rename_pattern == '-':
+                                    title = re.findall("\d+.*?-.*?(.*?)$", i)
+                            else:
+                                title = re.findall("\d+\. (.*?)$", i)
+                            
+                            if args.rename_pattern:
+                                if args.rename_pattern == '-':
+                                    track =  re.findall(".*?(\d+).*?-.*?", i)
+                            else:
+                                track =  re.findall(".*?(\d+\. )", i)
+                            if track:
+                                track = track[0].strip()
+                            if len(track) == 1:
+                                track = "0" + track
+                            
+                            title = re.sub("\.mp3", '', title[0], re.I)
+                            title = re.sub("\r\n", '', title, re.I)
+                            if title:
+                                title = title.strip()                            
+                            print(make_colors("RENAME", 'lw', 'lr') + ": " + make_colors(os.path.dirname(i), 'ly') + "\\" + make_colors(os.path.basename(
+                                i), 'lw', 'lr') + " " + make_colors("-->", 'lg') + " " + make_colors(str(track).split("/")[0] + ". " + str(title) + ".mp3", 'lw', 'bl'))
+                            if not args.test:
+                                os.rename(i, str(track).split("/")[0] + ". " + str(title) + ".mp3")
                     else:
                         m = ID3(i)
+                        debug(m = m)
+                        debug(TRCK =  m['TRCK'])
+                        if not m.get('TRCK'):
+                            pass
                         track = m['TRCK'].text[0]
                         debug(track = track)
                         debug(len_all_files = len(all_files))
@@ -240,13 +421,49 @@ class Tagger(object):
                             print(make_colors("No valid Tracks !", 'lw', 'lr', ['blink']))
                             sys.exit()
                         self.Set(i, all_title[all_files.index(i)], track, args.disc, args.album, args.artist, args.album_artist, args.original_artist, args.composer, args.comment, args.isrc, args.barcode, args.genre, args.date, args.bpm, args.copyright, args.encodedby, args.key, args.lyric, args.lyric_name, args.remix, args.subtitle, args.url, args.group, args.publisher, args.length, args.comment_desc, args.cover_name, args.cover, args.artist_solo, args.test)
+                        
+                        if args.rename == 'title':
+                            print(make_colors("RENAME", 'lw', 'lr') + ": " + make_colors(os.path.dirname(i), 'ly') + "\\" + make_colors(os.path.basename(
+                                i), 'lw', 'lr') + " " + make_colors("-->", 'lg') + " " + make_colors(str(track).split("/")[0] + ". " + str(all_title[all_files.index(i)][0]) + ".mp3", 'lw', 'bl'))
+                            if not args.test:
+                                os.rename(i, str(track).split("/")[0] + ". " + str(all_title[all_files.index(i)][0]) + ".mp3")
+                        elif args.rename == 'file':
+                            if args.rename_pattern:
+                                if args.rename_pattern == '-':
+                                    title = re.findall("\d+.*?-.*?(.*?)$", i)
+                            else:
+                                title = re.findall("\d+\. (.*?)$", i)
+                            
+                            
+                            if args.rename_pattern:
+                                if args.rename_pattern == '-':
+                                    track =  re.findall(".*?(\d+).*?-.*?", i)
+                            else:
+                                track =  re.findall(".*?(\d+\. )", i)
+                            if track:
+                                track = track[0].strip()
+                            if len(track) == 1:
+                                track = "0" + track
+                            
+                            title = re.sub("\.mp3", '', title[0], re.I)
+                            title = re.sub("\r\n", '', title, re.I)
+                            if title:
+                                title = title.strip()                            
+                            print(make_colors("RENAME", 'lw', 'lr') + ": " + make_colors(os.path.dirname(i), 'ly') + "\\" + make_colors(os.path.basename(
+                                i), 'lw', 'lr') + " " + make_colors("-->", 'lg') + " " + make_colors(str(track).split("/")[0] + ". " + str(title) + ".mp3", 'lw', 'bl'))
+                            if not args.test:
+                                os.rename(i, str(track).split("/")[0] + ". " + str(title) + ".mp3")                                                
+                    sys.stdout.write(cmdw.getWidth() * "-" + "\n")
+                print("\n")
             else:
                 for i in all_files:
                     m = ID3(i)
                     track = m['TRCK'].text[0]
                     track = self.format_track(track, len(all_files), change=args.change_track)
+                    debug(track = track)
                     
                     title = m['TIT2'].text
+                    debug(title = title)
                     if not track:
                         print(make_colors("No valid Tracks !", 'lw', 'lr', ['blink']))
                         sys.exit()
@@ -257,16 +474,51 @@ class Tagger(object):
                         if not args.test:
                             os.rename(i, str(track).split("/")[0] + ". " + str(title) + ".mp3")
                     elif args.rename == 'file':
-                        title = re.findall("\d+\. (.*?)$", i)
-                        track =  re.findall(".*?(\d+\. )", i)
-                        title = re.sub("\.mp3", '', title[0], re.I)
-                        title = re.sub("\r\n", '', title, re.I)
-                        print(make_colors("RENAME", 'lw', 'lr') + ": " + make_colors(os.path.dirname(i), 'ly') + "\\" + make_colors(os.path.basename(
-                            i), 'lw', 'lr') + " " + make_colors("-->", 'lg') + " " + make_colors(str(track).split("/")[0] + ". " + str(title) + ".mp3", 'lw', 'bl'))
-                        if not args.test:
-                            os.rename(i, str(track).split("/")[0] + ". " + str(title) + ".mp3")                        
+                        if args.rename_pattern:
+                            if args.rename_pattern == '-':
+                                title = re.findall("\d+.*?-.*?(.*?)$", i)
+                            else:
+                                title = re.findall("\d+\. (.*?)$", i)
+                            
+                            
+                            if args.rename_pattern:
+                                if args.rename_pattern == '-':
+                                    track =  re.findall(".*?(\d+).*?-.*?", i)
+                            else:
+                                track =  re.findall(".*?(\d+\. )", i)
+                            if track:
+                                track = track[0].strip()
+                            if len(track) == 1:
+                                track = "0" + track
+                            
+                            title = re.sub("\.mp3", '', title[0], re.I)
+                            title = re.sub("\r\n", '', title, re.I)
+                            if title:
+                                title = title.strip()                            
+                            print(make_colors("RENAME", 'lw', 'lr') + ": " + make_colors(os.path.dirname(i), 'ly') + "\\" + make_colors(os.path.basename(
+                                i), 'lw', 'lr') + " " + make_colors("-->", 'lg') + " " + make_colors(str(track).split("/")[0] + ". " + str(title) + ".mp3", 'lw', 'bl'))
+                            if not args.test:
+                                os.rename(i, str(track).split("/")[0] + ". " + str(title) + ".mp3")                                                
                         
-            
+                    sys.stdout.write(cmdw.getWidth() * "-" + "\n")
+                print("\n")
+    def print_licface(self):
+        from prettytable import PrettyTable
+        head = [make_colors("     TAG     ", 'lw', 'm'), make_colors("   0   ", 'b', 'ly'), make_colors("   1   ", 'b', 'ly'), make_colors("   2   ", 'b', 'ly'), make_colors("   3   ", 'b', 'ly')]
+        t = PrettyTable(head)
+        t.add_row([make_colors("ARTIST", 'lw', 'bl'), make_colors("AUTO", 'lg'), make_colors("AUTO", 'lg'), make_colors("AUTO", 'lg'), make_colors("AUTO", 'lg')])
+        t.add_row([make_colors("ALBUM_ARTIST", 'lw', 'bl'), make_colors("NO", 'lw', 'lr'), make_colors("NO", 'lw', 'lr'), make_colors("ARTIST", 'b', 'ly'), make_colors("ARTIST", 'b', 'ly')])
+        t.add_row([make_colors("COMMENT", 'lw', 'bl'), make_colors("YES", 'lr', 'lw'), make_colors("YES", 'lr', 'lw'), make_colors("YES", 'lr', 'lw'), make_colors("YES", 'lr', 'lw')])
+        t.add_row([make_colors("COMPOSER", 'lw', 'bl'), make_colors("NO", 'lw', 'lr'), make_colors("NO", 'lw', 'lr'), make_colors("ARTIST", 'b', 'ly'), make_colors("ARTIST", 'b', 'ly')])
+        t.add_row([make_colors("COPYRIGHT", 'lw', 'bl'), make_colors("YES", 'lr', 'lw'), make_colors("YES", 'lr', 'lw'), make_colors("YES", 'lr', 'lw'), make_colors("YES", 'lr', 'lw')])
+        t.add_row([make_colors("DATE", 'lw', 'bl'), make_colors("YES", 'lr', 'lw'), make_colors("YES", 'lr', 'lw'), make_colors("YES", 'lr', 'lw'), make_colors("NO", 'lw', 'r')])
+        t.add_row([make_colors("DISC", 'lw', 'bl'), make_colors("AUTO", 'lg'), make_colors("AUTO", 'lg'), make_colors("AUTO", 'lg'), make_colors("AUTO", 'lg')])
+        t.add_row([make_colors("ENCODEDBY", 'lw', 'bl'), make_colors("YES", 'lr', 'lw'), make_colors("YES", 'lr', 'lw'), make_colors("YES", 'lr', 'lw'), make_colors("YES", 'lr', 'lw')])
+        t.add_row([make_colors("ORIGINAL_ARTIST", 'lw', 'bl'), make_colors("ARTIST", 'b', 'ly'), make_colors("NO", 'lw', 'lr'), make_colors("ARTIST", 'b', 'ly'), make_colors("ARTIST", 'b', 'ly')])
+        t.add_row([make_colors("GROUP", 'lw', 'bl'), make_colors("ARTIST", 'b', 'ly'), make_colors("NO", 'lw', 'lr'), make_colors("ARTIST", 'b', 'ly'), make_colors("ARTIST", 'b', 'ly')])
+        t.add_row([make_colors("PUBLISHER", 'lw', 'bl'), make_colors("NO", 'lw', 'lr'), make_colors("YES", 'lr', 'lw'), make_colors("YES", 'lr', 'lw'), make_colors("YES", 'lr', 'lw')])
+        t.add_row([make_colors("URL", 'lw', 'bl'), make_colors("NO", 'lw', 'lr'), make_colors("NO", 'lw', 'lr'), make_colors("YES", 'lr', 'lw'), make_colors("YES", 'lr', 'lw')])
+        print(t)
     def Set(self, music_file, title = None, track = None, disc = None, album = None, artist = None, album_artist = None, original = None, composer = None, comment = None, isrc = None, barcode = None, genre = None, date = None, bpm = None, copyright = None, encodedby = None, key = None, lyric = None, lyric_name = None, remix = None, subtitle = None, url = None, group = None, publisher = None, length = None, comment_desc = '', cover_name = 'Cover Album Front', cover = None, solo_artist = '', test = False):
         
         def change_split(h_frame):
@@ -326,10 +578,15 @@ class Tagger(object):
                 else:
                     obj_frame = frame
                 #print("h_frame_value =", h_frame_value)
+                #print("h_frame_name.lower() =", h_frame_name.lower())
+                #print("obj_frame =", obj_frame)
+                #print("obj[obj_frame] =", obj[obj_frame])
                 if not h_frame_value == obj[obj_frame]:
                     print(make_colors("{0}:".format(h_frame_name).upper(), 'lc') + make_colors(str(obj[frame]), 'lw', 'lr') + " " + make_colors(" --> ", 'ly') + " " + make_colors(h_frame_value, 'lw', 'bl'))
-                    if h_frame_value == '' or h_frame_value == 'clear':
-                        h_frame_name = ''
+                    if h_frame_value == 'clear':
+                        #print("h_frame_value 2 =", h_frame_value)
+                        #print("h_frame_name.lower() =", h_frame_name.lower())
+                        h_frame_value = ''
                     if h_frame_name.lower() == 'title':
                         obj.add(id3.TIT2(encoding = encoding, text = h_frame_value))
                     elif h_frame_name.lower() == 'track':
@@ -353,6 +610,7 @@ class Tagger(object):
                     elif h_frame_name.lower() == 'composer':
                         obj.add(id3.TCOM(encoding = encoding, text = h_frame_value))
                     elif h_frame_name.lower() == 'isrc':
+                        #print("h_frame_value 3 =", h_frame_value)
                         obj.add(id3.TSRC(encoding = encoding, text = h_frame_value))
                     elif h_frame_name.lower() == 'barcode':
                         obj.add(id3.TXXX(encoding = encoding, desc = 'BARCODE', text =str(h_frame_value)))
@@ -391,6 +649,8 @@ class Tagger(object):
                             comment_desc = ''                        
                         obj.add(id3.COMM(encoding = encoding, lang = 'eng', desc = comment_desc, text = h_frame_value))
                     elif h_frame_name.lower() == 'cover':
+                        print(make_colors("Change cover", 'lw', 'r'))
+                        #print("h_frame_value_cover =", h_frame_value)
                         if os.path.isfile(h_frame_value):
                             img = Image.open(h_frame_value)
                             mime = img.format
@@ -519,7 +779,7 @@ class Tagger(object):
                 try:
                     print(make_colors("Original Artist:", 'lc') + make_colors(str(a['TOPE']), 'lw', 'lr') + " " + make_colors(" --> ", 'ly') + " " + make_colors(original, 'lw', 'bl'))
                 except:
-                    print(make_colors("Original Artist:", 'lc') + make_colors('TOPE', 'lw', 'lr') + " " + make_colors(" --> ", 'ly') + " " + make_colors(original, 'lw', 'bl'))
+                    print(make_colors("Original Artist:", 'lc') + make_colors('TOPE', 'lw', 'lr') + " " + make_colors(" --> ", 'ly') + " " + make_colors(str(original), 'lw', 'bl'))
                 if original == '' or original == 'clear':
                     a.add(id3.TOPE(encoding = 3, text = ''))
                 else:
@@ -533,7 +793,7 @@ class Tagger(object):
                 try:
                     print(make_colors("Composer:", 'lc') + make_colors(str(a[comment_key]), 'lw', 'lr') + " " + make_colors(" --> ", 'ly') + " " + make_colors(composer, 'lw', 'bl'))
                 except:
-                    print(make_colors("Composer:", 'lc') + make_colors('TCOM', 'lw', 'lr') + " " + make_colors(" --> ", 'ly') + " " + make_colors(composer, 'lw', 'bl'))
+                    print(make_colors("Composer:", 'lc') + make_colors('TCOM', 'lw', 'lr') + " " + make_colors(" --> ", 'ly') + " " + make_colors(str(composer), 'lw', 'bl'))
                 if composer == '' or composer == 'clear':
                     a.add(id3.TCOM(encoding = 3, text = ''))
                 else:
@@ -693,7 +953,7 @@ class Tagger(object):
                 try:
                     print(make_colors("Group:", 'lc') + make_colors(str(a['TIT1']), 'lw', 'lr') + " " + make_colors(" --> ", 'ly') + " " + make_colors(group, 'lw', 'bl'))
                 except:
-                    print(make_colors("Group:", 'lc') + make_colors('TIT1', 'lw', 'lr') + " " + make_colors(" --> ", 'ly') + " " + make_colors(group, 'lw', 'bl'))
+                    print(make_colors("Group:", 'lc') + make_colors('TIT1', 'lw', 'lr') + " " + make_colors(" --> ", 'ly') + " " + make_colors(str(group), 'lw', 'bl'))
                 if group == '' or group == 'clear':
                     a.add(id3.TIT1(encoding = 3, text = ''))
                 else:
@@ -755,7 +1015,7 @@ class Tagger(object):
             
             if not test:
                 a.save()
-        sys.stdout.write(cmdw.getWidth() * "-")
+        #sys.stdout.write(cmdw.getWidth() * "-")
                 
     def convert_frame(self, frame):
         if frame == 'TIT1':
@@ -844,9 +1104,34 @@ class Tagger(object):
             img = Image.open(st)
             return img.size, img.format
         return '', ''
+        
+    def Extract_cover(self, file_music, filename='Cover'):
+        tag = ID3(file_music)
+        cover_key = re.findall("'APIC.*?'", str(tag.keys()))
+        if cover_key:
+            cover_key = cover_key[0][1:-1]
+            img_data = None
+            try:
+                img_data = tag[cover_key].data
+            except:
+                pass
+            if img_data:
+                size, format = self.Get_Cover_Info(img_data)
+                debug(size = size)
+                debug(format = format)
+            
+                ext = mimelist.get2(format)[1]
+                if not ext:
+                    ext = ".jpg"
+                
+                with open(filename + "." + ext, 'wb') as cover:
+                    cover.write(img_data)
+            
             
     def Get(self, music_file, save_as = None):
         tag = ID3(music_file)
+        tag_mp3 = MP3(music_file)
+        info = tag_mp3.info.__dict__
         keys = tag.keys()
         #list_h_frame = []
         len_list_h_frame = []
@@ -858,7 +1143,7 @@ class Tagger(object):
         MAX = max(len_list_h_frame)
         for i in keys:
             if not "APIC" in i:
-                print(make_colors(self.convert_frame(i).upper() + (MAX - len(self.convert_frame(i))) * " " + " : ", 'lw', 'bl') + make_colors(tag[i], 'lc'))
+                print(make_colors(self.convert_frame(i).upper() + (MAX - len(self.convert_frame(i))) * " " + " : ", 'lw', 'bl') + make_colors(str(tag[i]), 'lc'))
             else:
                 cover_key = re.findall("'APIC.*?'", str(tag.keys()))
                 if cover_key:
@@ -872,7 +1157,10 @@ class Tagger(object):
                         size, format = self.Get_Cover_Info(img_data)
                         debug(size = size)
                         debug(format = format)
-                    print(make_colors(self.convert_frame(cover_key).upper() + (MAX - len(self.convert_frame(cover_key))) * " " + " : ", 'lw', 'bl') + make_colors("size: " + str(size[0]) + "x" + str(size[1]) + ", format: " + str(format) + ", data:" + str(tag[cover_key].data[:10]), 'lc') + " ...")
+                        print(make_colors(self.convert_frame(cover_key).upper() + (MAX - len(self.convert_frame(cover_key))) * " " + " : ", 'lw', 'bl') + make_colors("size: " + str(size[0]) + "x" + str(size[1]) + ", format: " + str(format) + ", data:" + str(tag[cover_key].data[:10]), 'lc') + " ...")
+        for f in info:            
+            f1 = re.sub("_", " ", f)
+            print(make_colors(f1.upper() + (MAX - len(f1)) * " " + " : ", 'lw', 'bl') + make_colors(str(info[f]), 'lc'))
         print(cmdw.getWidth() * "-")
         
 
