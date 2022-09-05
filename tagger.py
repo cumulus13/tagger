@@ -38,6 +38,7 @@ from datetime import datetime
 class Tagger(object):
     NOW = datetime.now()
     THIS_YEAR = NOW.year
+    TRACK_START = 1
     
     def __init__(self, files = None, dirs = None):
         super(Tagger, self)
@@ -51,6 +52,7 @@ class Tagger(object):
         self.len_tracks = None
     
     def format_track(self, track, numbers, change = False):
+        track = str(track)
         if self.len_tracks:
             numbers = self.len_tracks
         if len(str(numbers)) == 1:
@@ -308,6 +310,7 @@ class Tagger(object):
                     sys.exit()
             if len(all_title) == len(all_files):
                 for i in all_files:
+                    print(make_colors("FILE:", 'lc') + " " + make_colors(i, 'ly'))
                     if args.licface == '0':
                         if not args.artist:
                             m = ID3(i)
@@ -408,12 +411,17 @@ class Tagger(object):
                                 os.rename(i, str(track).split("/")[0] + ". " + str(title) + ".mp3")
                     else:
                         m = ID3(i)
-                        debug(m = m)
-                        debug(TRCK =  m['TRCK'])
-                        if not m.get('TRCK'):
-                            pass
-                        track = m['TRCK'].text[0]
-                        debug(track = track)
+                        debug(m = m.keys())
+                        if m.get('TRCK'):
+                            debug(TRCK =  m['TRCK'])
+                        # if not m.get('TRCK'):
+                        #     pass
+
+                            track = m['TRCK'].text[0]
+                            debug(track = track)
+                        else:
+                            track = self.TRACK_START
+                            self.TRACK_START += 1
                         debug(len_all_files = len(all_files))
                         debug(args_change_track = args.change_track)
                         track = self.format_track(track, len(all_files), args.change_track)
@@ -1129,6 +1137,7 @@ class Tagger(object):
             
             
     def Get(self, music_file, save_as = None):
+        print(make_colors("FILE:", 'lc') + " " + make_colors(music_file, 'ly'))
         tag = ID3(music_file)
         tag_mp3 = MP3(music_file)
         info = tag_mp3.info.__dict__
